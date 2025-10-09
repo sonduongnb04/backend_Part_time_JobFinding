@@ -1,0 +1,22 @@
+# ASP.NET / .NET build files
+bin/
+obj/
+*.user
+*.suo
+*.vspscc
+.vs/
+.vscode/
+*.dll
+*.exe
+*.db
+*.pdb
+*.log
+
+# Secrets / local settings
+appsettings.Development.json
+appsettings.Local.json
+appsettings.*.json
+secrets.json
+
+# Environment files
+.env
