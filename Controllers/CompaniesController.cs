@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using PTJ.Auth;
 using PTJ.Core;
 using PTJ.Data;
 using PTJ.Org;
@@ -12,7 +13,6 @@ namespace PTJ.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Roles = "EMPLOYER")]
 public class CompaniesController : ControllerBase
 {
     private readonly AppDbContext _db;
@@ -26,6 +26,7 @@ public class CompaniesController : ControllerBase
 
     // GET /api/companies/my
     [HttpGet("my")]
+    [Authorize(Roles = "EMPLOYER")]
     public async Task<IActionResult> GetMyCompanies()
     {
         var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
@@ -56,6 +57,7 @@ public class CompaniesController : ControllerBase
 
     // POST /api/companies
     [HttpPost]
+    [Authorize]
     public async Task<IActionResult> CreateCompany([FromBody] CreateCompanyRequest req)
     {
         var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
@@ -86,6 +88,29 @@ public class CompaniesController : ControllerBase
         _db.Companies.Add(company);
         await _db.SaveChangesAsync();
 
+        // Auto gán EMPLOYER role nếu User chưa có
+        var hasEmployerRole = await _db.UserRoles
+            .Include(ur => ur.Role)
+            .AnyAsync(ur => ur.UserId == userId && ur.Role.Code == "EMPLOYER");
+
+        if (!hasEmployerRole)
+        {
+            var employerRole = await _db.Roles
+                .Where(r => r.Code == "EMPLOYER")
+                .FirstOrDefaultAsync();
+
+            if (employerRole != null)
+            {
+                _db.UserRoles.Add(new UserRole
+                {
+                    UserId = userId,
+                    RoleId = employerRole.RoleId,
+                    AssignedAt = DateTime.UtcNow
+                });
+                await _db.SaveChangesAsync();
+            }
+        }
+
         return Ok(new
         {
             message = "Company created successfully",
@@ -95,6 +120,7 @@ public class CompaniesController : ControllerBase
 
     // PUT /api/companies/{id}
     [HttpPut("{id}")]
+    [Authorize(Roles = "EMPLOYER")]
     public async Task<IActionResult> UpdateCompany(Guid id, [FromBody] UpdateCompanyRequest req)
     {
         var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
@@ -128,6 +154,7 @@ public class CompaniesController : ControllerBase
 
     // POST /api/companies/{id}/logo
     [HttpPost("{id}/logo")]
+    [Authorize(Roles = "EMPLOYER")]
     public async Task<IActionResult> UploadLogo(Guid id, IFormFile file)
     {
         var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
@@ -182,6 +209,7 @@ public class CompaniesController : ControllerBase
 
     // DELETE /api/companies/{id}/logo
     [HttpDelete("{id}/logo")]
+    [Authorize(Roles = "EMPLOYER")]
     public async Task<IActionResult> DeleteLogo(Guid id)
     {
         var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
@@ -206,6 +234,7 @@ public class CompaniesController : ControllerBase
 
     // DELETE /api/companies/{id}
     [HttpDelete("{id}")]
+    [Authorize(Roles = "EMPLOYER")]
     public async Task<IActionResult> DeleteCompany(Guid id)
     {
         var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
