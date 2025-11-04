@@ -4,6 +4,7 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.IdentityModel.Tokens;
 using PTJ.Data;
 using PTJ.Services;
+using PTJ.Repositories;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -15,6 +16,13 @@ builder.Services.AddDbContext<AppDbContext>(opt =>
 // JWT options
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
 builder.Services.AddSingleton<JwtService>();
+
+// Repository & Unit of Work
+builder.Services.AddScoped(typeof(IRepository<>), typeof(GenericRepository<>));
+builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
+
+// Services
+builder.Services.AddScoped<IJobPostService, JobPostService>();
 
 // File Storage Service
 var storageProvider = builder.Configuration["FileStorage:Provider"] ?? "Local";

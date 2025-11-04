@@ -1,9 +1,9 @@
-// Data/AppDbContext.cs  (mới, hoặc thay nội dung file hiện tại nếu bạn bỏ Identity)
 using Microsoft.EntityFrameworkCore;
 using PTJ.Auth;
 using PTJ.Core;
 using PTJ.Seeker;
 using PTJ.Org;
+using PTJ.Jobs;
 
 namespace PTJ.Data;
 
@@ -29,6 +29,11 @@ public class AppDbContext : DbContext
 
     // Companies
     public DbSet<Company> Companies => Set<Company>();
+
+    //Jobs
+    public DbSet<JobPost> JobPosts => Set<JobPost>();
+    public DbSet<JobShift> JobShifts => Set<JobShift>();
+    public DbSet<JobPostSkill> JobPostSkills => Set<JobPostSkill>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -146,6 +151,36 @@ public class AppDbContext : DbContext
             e.Property(x => x.RowVer).IsRowVersion();
             e.HasOne(x => x.OwnerUser).WithMany().HasForeignKey(x => x.OwnerUserId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.LogoFile).WithMany().HasForeignKey(x => x.LogoFileId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // jobs.JobPosts
+        b.Entity<JobPost>(e =>
+        {
+            e.ToTable("JobPosts", "jobs");
+            e.HasKey(x => x.JobPostId);
+            e.Property(x => x.JobPostId).HasDefaultValueSql("NEWSEQUENTIALID()");
+            e.Property(x => x.RowVer).IsRowVersion();
+            e.Property(x => x.SalaryMin).HasPrecision(12, 2);
+            e.Property(x => x.SalaryMax).HasPrecision(12, 2);
+            e.HasOne(x => x.Company).WithMany().HasForeignKey(x => x.CompanyId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Creator).WithMany().HasForeignKey(x => x.CreatedBy).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // jobs.JobShifts
+        b.Entity<JobShift>(e =>
+        {
+            e.ToTable("JobShifts", "jobs");
+            e.HasKey(x => x.JobShiftId);
+            e.Property(x => x.JobShiftId).HasDefaultValueSql("NEWSEQUENTIALID()");
+            e.HasOne(x => x.JobPost).WithMany(p => p.JobShifts).HasForeignKey(x => x.JobPostId);
+        });
+
+        // jobs.JobPostSkills
+        b.Entity<JobPostSkill>(e =>
+        {
+            e.ToTable("JobPostSkills", "jobs");
+            e.HasKey(x => new { x.JobPostId, x.SkillId });
+            e.HasOne(x => x.JobPost).WithMany(p => p.JobPostSkills).HasForeignKey(x => x.JobPostId);
         });
     }
 }
