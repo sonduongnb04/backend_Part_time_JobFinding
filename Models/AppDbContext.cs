@@ -35,6 +35,8 @@ public class AppDbContext : DbContext
     public DbSet<JobShift> JobShifts => Set<JobShift>();
     public DbSet<JobPostSkill> JobPostSkills => Set<JobPostSkill>();
 
+    public DbSet<CompanyRegistrationRequest> CompanyRegistrationRequests => Set<CompanyRegistrationRequest>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         base.OnModelCreating(b);
@@ -78,7 +80,10 @@ public class AppDbContext : DbContext
             e.ToTable("RefreshTokens", "auth");
             e.HasKey(x => x.TokenId);
             e.Property(x => x.TokenId).HasDefaultValueSql("NEWSEQUENTIALID()");
-            e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.User)
+             .WithMany(u => u.RefreshTokens)
+             .HasForeignKey(x => x.UserId)
+             .OnDelete(DeleteBehavior.Restrict);
         });
 
         // core.Files
@@ -182,5 +187,27 @@ public class AppDbContext : DbContext
             e.HasKey(x => new { x.JobPostId, x.SkillId });
             e.HasOne(x => x.JobPost).WithMany(p => p.JobPostSkills).HasForeignKey(x => x.JobPostId);
         });
+
+        b.Entity<CompanyRegistrationRequest>(e =>
+    {
+        e.ToTable("CompanyRegistrationRequests", "org");
+        e.HasKey(x => x.RequestId);
+        e.Property(x => x.RequestId).HasDefaultValueSql("NEWSEQUENTIALID()");
+
+        e.HasOne(x => x.RequestedByUser)
+            .WithMany()
+            .HasForeignKey(x => x.RequestedByUserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        e.HasOne(x => x.ReviewedByUser)
+            .WithMany()
+            .HasForeignKey(x => x.ReviewedByUserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        e.HasOne(x => x.CreatedCompany)
+            .WithMany()
+            .HasForeignKey(x => x.CreatedCompanyId)
+            .OnDelete(DeleteBehavior.Restrict);
+    });
     }
 }

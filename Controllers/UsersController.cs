@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PTJ.Auth;
 using PTJ.Data;
+using PTJ.Org;
 using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
 
@@ -161,8 +162,169 @@ public class UsersController : ControllerBase
             isActive = user.IsActive
         });
     }
-}
+    // GET /api/admin/company-requests - Danh sách request chờ duyệt
+    [HttpGet("company-requests")]
+    [Authorize(Roles = "ADMIN")]
+    public async Task<IActionResult> GetPendingCompanyRequests(
+        [FromQuery] byte? status = null, // null=all, 0=Pending, 1=Approved, 2=Rejected
+        [FromQuery] int page = 1,
+        [FromQuery] int size = 20)
+    {
+        var query = _db.CompanyRegistrationRequests
+            .Include(r => r.RequestedByUser)
+            .AsQueryable();
 
+        if (status.HasValue)
+            query = query.Where(r => r.Status == status.Value);
+
+        var requests = await query
+            .OrderByDescending(r => r.RequestedAt)
+            .Skip((page - 1) * size)
+            .Take(size)
+            .Select(r => new
+            {
+                requestId = r.RequestId,
+                companyName = r.CompanyName,
+                description = r.Description,
+                requester = new
+                {
+                    userId = r.RequestedByUser.UserId,
+                    email = r.RequestedByUser.Email,
+                    fullName = r.RequestedByUser.FullName
+                },
+                status = r.Status,
+                requestedAt = r.RequestedAt,
+                reviewedAt = r.ReviewedAt,
+                reviewNote = r.ReviewNote
+            })
+            .ToListAsync();
+
+        return Ok(requests);
+    }
+    // GET /api/admin/company-requests/{id} - Chi tiết request
+    [HttpGet("company-requests/{id}")]
+    [Authorize(Roles = "ADMIN")]
+    public async Task<IActionResult> GetCompanyRequest(Guid id)
+    {
+        var request = await _db.CompanyRegistrationRequests
+            .Include(r => r.RequestedByUser)
+            .Where(r => r.RequestId == id)
+            .FirstOrDefaultAsync();
+
+        if (request == null)
+            return NotFound(new { message = "Request not found" });
+
+        return Ok(request);
+    }
+
+    // POST /api/admin/company-requests/{id}/approve - Duyệt request
+    [HttpPost("company-requests/{id}/approve")]
+    [Authorize(Roles = "ADMIN")]
+    public async Task<IActionResult> ApproveCompanyRequest(
+        Guid id,
+        [FromBody] ReviewRequest req)
+    {
+        var adminId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+
+        var request = await _db.CompanyRegistrationRequests
+            .Include(r => r.RequestedByUser)
+            .Where(r => r.RequestId == id && r.Status == 0) // Chỉ approve Pending
+            .FirstOrDefaultAsync();
+
+        if (request == null)
+            return NotFound(new { message = "Request not found or already processed" });
+
+        // Tạo Company vào DB
+        var company = new Company
+        {
+            CompanyId = Guid.NewGuid(),
+            OwnerUserId = request.RequestedByUserId,
+            Name = request.CompanyName,
+            Description = request.Description,
+            WebsiteUrl = request.WebsiteUrl,
+            EmailPublic = request.EmailPublic,
+            PhonePublic = request.PhonePublic,
+            AddressLine1 = request.AddressLine1,
+            Ward = request.Ward,
+            District = request.District,
+            City = request.City,
+            Province = request.Province,
+            PostalCode = request.PostalCode,
+            Latitude = request.Latitude,
+            Longitude = request.Longitude,
+            Verification = 0,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+            IsDeleted = false
+        };
+
+        _db.Companies.Add(company);
+
+        // Gán EMPLOYER role cho user
+        var employerRole = await _db.Roles
+            .Where(r => r.Code == "EMPLOYER")
+            .FirstOrDefaultAsync();
+
+        if (employerRole != null)
+        {
+            var hasRole = await _db.UserRoles
+                .AnyAsync(ur => ur.UserId == request.RequestedByUserId
+                    && ur.RoleId == employerRole.RoleId);
+
+            if (!hasRole)
+            {
+                _db.UserRoles.Add(new UserRole
+                {
+                    UserId = request.RequestedByUserId,
+                    RoleId = employerRole.RoleId,
+                    AssignedAt = DateTime.UtcNow
+                });
+            }
+        }
+
+        // Cập nhật request status
+        request.Status = 1; // Approved
+        request.ReviewedByUserId = adminId;
+        request.ReviewedAt = DateTime.UtcNow;
+        request.ReviewNote = req.Note;
+        request.CreatedCompanyId = company.CompanyId;
+
+        await _db.SaveChangesAsync();
+
+        return Ok(new
+        {
+            message = "Company request approved successfully",
+            companyId = company.CompanyId,
+            requestId = request.RequestId
+        });
+    }
+    // POST /api/admin/company-requests/{id}/reject - Từ chối request
+    [HttpPost("company-requests/{id}/reject")]
+    [Authorize(Roles = "ADMIN")]
+    public async Task<IActionResult> RejectCompanyRequest(
+        Guid id,
+        [FromBody] ReviewRequest req)
+    {
+        var adminId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+
+        var request = await _db.CompanyRegistrationRequests
+            .Where(r => r.RequestId == id && r.Status == 0)
+            .FirstOrDefaultAsync();
+
+        if (request == null)
+            return NotFound(new { message = "Request not found or already processed" });
+
+        request.Status = 2; // Rejected
+        request.ReviewedByUserId = adminId;
+        request.ReviewedAt = DateTime.UtcNow;
+        request.ReviewNote = req.Note ?? "Request rejected";
+
+        await _db.SaveChangesAsync();
+
+        return Ok(new { message = "Company request rejected" });
+    }
+
+}
 // DTOs
 public class UpdateUserRequest
 {
@@ -171,4 +333,8 @@ public class UpdateUserRequest
 
     [MaxLength(32)]
     public string? PhoneNumber { get; set; }
+}
+public class ReviewRequest
+{
+    public string? Note { get; set; }
 }
