@@ -62,11 +62,18 @@ public class CompaniesController : ControllerBase
     {
         var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
-        var company = new Company
+        // Kiểm tra user đã có request pending chưa
+        var hasPending = await _db.CompanyRegistrationRequests
+            .AnyAsync(r => r.RequestedByUserId == userId && r.Status == 0);
+
+        if (hasPending)
+            return BadRequest(new { message = "Bạn đã có yêu cầu đang chờ duyệt" });
+
+        var request = new CompanyRegistrationRequest
         {
-            CompanyId = Guid.NewGuid(),
-            OwnerUserId = userId,
-            Name = req.Name,
+            RequestId = Guid.NewGuid(),
+            RequestedByUserId = userId,
+            CompanyName = req.Name,
             Description = req.Description,
             WebsiteUrl = req.WebsiteUrl,
             EmailPublic = req.EmailPublic,
@@ -79,43 +86,67 @@ public class CompaniesController : ControllerBase
             PostalCode = req.PostalCode,
             Latitude = req.Latitude,
             Longitude = req.Longitude,
-            Verification = 0, // Chưa xác minh
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow,
-            IsDeleted = false
+            Status = 0, // Pending
+            RequestedAt = DateTime.UtcNow
         };
 
-        _db.Companies.Add(company);
+        _db.CompanyRegistrationRequests.Add(request);
         await _db.SaveChangesAsync();
 
-        // Auto gán EMPLOYER role nếu User chưa có
-        var hasEmployerRole = await _db.UserRoles
-            .Include(ur => ur.Role)
-            .AnyAsync(ur => ur.UserId == userId && ur.Role.Code == "EMPLOYER");
+        // Bỏ Auto gán EMPLOYER role nếu User chưa có
+        // var hasEmployerRole = await _db.UserRoles
+        //     .Include(ur => ur.Role)
+        //     .AnyAsync(ur => ur.UserId == userId && ur.Role.Code == "EMPLOYER");
 
-        if (!hasEmployerRole)
-        {
-            var employerRole = await _db.Roles
-                .Where(r => r.Code == "EMPLOYER")
-                .FirstOrDefaultAsync();
+        // if (!hasEmployerRole)
+        // {
+        //     var employerRole = await _db.Roles
+        //         .Where(r => r.Code == "EMPLOYER")
+        //         .FirstOrDefaultAsync();
 
-            if (employerRole != null)
-            {
-                _db.UserRoles.Add(new UserRole
-                {
-                    UserId = userId,
-                    RoleId = employerRole.RoleId,
-                    AssignedAt = DateTime.UtcNow
-                });
-                await _db.SaveChangesAsync();
-            }
-        }
+        //     if (employerRole != null)
+        //     {
+        //         _db.UserRoles.Add(new UserRole
+        //         {
+        //             UserId = userId,
+        //             RoleId = employerRole.RoleId,
+        //             AssignedAt = DateTime.UtcNow
+        //         });
+        //         await _db.SaveChangesAsync();
+        //     }
+        // }
 
         return Ok(new
         {
-            message = "Company created successfully",
-            companyId = company.CompanyId
+            message = "Yêu cầu đăng ký công ty đã được gửi. Vui lòng chờ ADMIN phê duyệt.",
+            requestId = request.RequestId,
+            status = "Pending"
         });
+    }
+
+    // GET /api/companies/my/requests - Xem trạng thái request của mình
+    [HttpGet("my/requests")]
+    [Authorize]
+    public async Task<IActionResult> GetMyRequests()
+    {
+        var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+
+        var requests = await _db.CompanyRegistrationRequests
+            .Where(r => r.RequestedByUserId == userId)
+            .OrderByDescending(r => r.RequestedAt)
+            .Select(r => new
+            {
+                requestId = r.RequestId,
+                companyName = r.CompanyName,
+                status = r.Status, // 0=Pending, 1=Approved, 2=Rejected
+                requestedAt = r.RequestedAt,
+                reviewedAt = r.ReviewedAt,
+                reviewNote = r.ReviewNote,
+                createdCompanyId = r.CreatedCompanyId
+            })
+            .ToListAsync();
+
+        return Ok(requests);
     }
 
     // PUT /api/companies/{id}
