@@ -282,22 +282,18 @@ public class UsersController : ControllerBase
             }
         }
 
-        // Cập nhật request status
-        request.Status = 1; // Approved
-        request.ReviewedByUserId = adminId;
-        request.ReviewedAt = DateTime.UtcNow;
-        request.ReviewNote = req.Note;
-        request.CreatedCompanyId = company.CompanyId;
+        // Xóa request sau khi approve thành công
+        _db.CompanyRegistrationRequests.Remove(request);
 
         await _db.SaveChangesAsync();
 
         return Ok(new
         {
-            message = "Company request approved successfully",
-            companyId = company.CompanyId,
-            requestId = request.RequestId
+            message = "Company request approved and added to Companies successfully",
+            companyId = company.CompanyId
         });
     }
+
     // POST /api/admin/company-requests/{id}/reject - Từ chối request
     [HttpPost("company-requests/{id}/reject")]
     [Authorize(Roles = "ADMIN")]
