@@ -25,21 +25,74 @@ public class JobPostsController : ControllerBase
     // GET /api/jobposts
     [HttpGet]
     [AllowAnonymous]
-    public async Task<IActionResult> GetAllJobPosts([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    public async Task<IActionResult> GetAllJobPosts(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] Guid? categoryId = null,
+        [FromQuery] decimal? minSalary = null,
+        [FromQuery] decimal? maxSalary = null,
+        [FromQuery] string? shiftName = null,
+        [FromQuery] byte? dayOfWeek = null)
     {
-        var jobPosts = await _db.JobPosts
+        if (page <= 0) page = 1;
+        if (pageSize <= 0) pageSize = 20;
+        if (pageSize > 100) pageSize = 100;
+
+        var query = _db.JobPosts
             .Include(j => j.Company)
             .Include(j => j.JobShifts)
             .Where(j => !j.IsDeleted && j.StatusId == 2) // Status 2 = Published
+            .AsQueryable();
+
+        if (categoryId != null)
+        {
+            query = query.Where(j => j.CategoryId == categoryId);
+        }
+
+        // Salary overlap filtering:
+        // - If minSalary specified: keep posts whose SalaryMax is null or SalaryMax >= minSalary
+        // - If maxSalary specified: keep posts whose SalaryMin is null or SalaryMin <= maxSalary
+        if (minSalary != null)
+        {
+            var min = minSalary.Value;
+            query = query.Where(j => j.SalaryMax == null || j.SalaryMax >= min);
+        }
+        if (maxSalary != null)
+        {
+            var max = maxSalary.Value;
+            query = query.Where(j => j.SalaryMin == null || j.SalaryMin <= max);
+        }
+
+        if (!string.IsNullOrWhiteSpace(shiftName))
+        {
+            var pattern = $"%{shiftName.Trim()}%";
+            query = query.Where(j => j.JobShifts.Any(s => s.ShiftName != null && EF.Functions.Like(s.ShiftName, pattern)));
+        }
+
+        if (dayOfWeek != null)
+        {
+            var dow = dayOfWeek.Value;
+            query = query.Where(j => j.JobShifts.Any(s => s.DayOfWeek == dow));
+        }
+
+        var total = await query.CountAsync();
+
+        var jobPosts = await query
             .OrderByDescending(j => j.CreatedAt)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .ToListAsync();
 
-        return Ok(jobPosts);
+        return Ok(new
+        {
+            items = jobPosts,
+            total,
+            page,
+            pageSize
+        });
     }
 
-    // GET /api/jobposts/{id}
+   
     [HttpGet("{id}")]
     [AllowAnonymous]
     public async Task<IActionResult> GetJobPost(Guid id)
@@ -54,14 +107,12 @@ public class JobPostsController : ControllerBase
         if (jobPost == null)
             return NotFound(new { message = "Job post not found" });
 
-        // Increase view count
         jobPost.ViewCount++;
         await _db.SaveChangesAsync();
 
         return Ok(jobPost);
     }
 
-    // GET /api/jobposts/my
     [HttpGet("my")]
     [Authorize(Roles = "EMPLOYER")]
     public async Task<IActionResult> GetMyJobPosts()
@@ -78,7 +129,6 @@ public class JobPostsController : ControllerBase
         return Ok(jobPosts);
     }
 
-    // GET /api/jobposts/company/{companyId}
     [HttpGet("company/{companyId}")]
     [AllowAnonymous]
     public async Task<IActionResult> GetJobPostsByCompany(Guid companyId)
@@ -93,14 +143,12 @@ public class JobPostsController : ControllerBase
         return Ok(jobPosts);
     }
 
-    // POST /api/jobposts
     [HttpPost]
     [Authorize(Roles = "EMPLOYER")]
     public async Task<IActionResult> CreateJobPost([FromBody] CreateJobPostRequest req)
     {
         var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
-        // Verify company ownership
         var company = await _db.Companies
             .Where(c => c.CompanyId == req.CompanyId && c.OwnerUserId == userId && !c.IsDeleted)
             .FirstOrDefaultAsync();
@@ -150,7 +198,7 @@ public class JobPostsController : ControllerBase
         });
     }
 
-    // PUT /api/jobposts/{id}
+
     [HttpPut("{id}")]
     [Authorize(Roles = "EMPLOYER")]
     public async Task<IActionResult> UpdateJobPost(Guid id, [FromBody] UpdateJobPostRequest req)
@@ -165,7 +213,6 @@ public class JobPostsController : ControllerBase
         if (jobPost == null)
             return NotFound(new { message = "Job post not found or you don't have permission" });
 
-        // Update fields
         if (req.Title != null) jobPost.Title = req.Title;
         if (req.CategoryId != null) jobPost.CategoryId = req.CategoryId;
         if (req.Description != null) jobPost.Description = req.Description;
@@ -194,7 +241,6 @@ public class JobPostsController : ControllerBase
         return Ok(new { message = "Job post updated successfully" });
     }
 
-    // DELETE /api/jobposts/{id}
     [HttpDelete("{id}")]
     [Authorize(Roles = "EMPLOYER")]
     public async Task<IActionResult> DeleteJobPost(Guid id)
@@ -216,7 +262,6 @@ public class JobPostsController : ControllerBase
         return Ok(new { message = "Job post deleted successfully" });
     }
 
-    // PUT /api/jobposts/{id}/status
     [HttpPut("{id}/status")]
     [Authorize(Roles = "EMPLOYER")]
     public async Task<IActionResult> ChangeStatus(Guid id, [FromBody] ChangeStatusRequest req)
@@ -233,7 +278,6 @@ public class JobPostsController : ControllerBase
         jobPost.StatusId = req.StatusId;
         jobPost.UpdatedAt = DateTime.UtcNow;
 
-        // If publishing, set PublishAt if not set
         if (req.StatusId == 2 && jobPost.PublishAt == null)
         {
             jobPost.PublishAt = DateTime.UtcNow;
@@ -244,7 +288,6 @@ public class JobPostsController : ControllerBase
         return Ok(new { message = "Job post status updated successfully" });
     }
 
-    // POST /api/jobposts/{id}/shifts
     [HttpPost("{id}/shifts")]
     [Authorize(Roles = "EMPLOYER")]
     public async Task<IActionResult> AddShift(Guid id, [FromBody] CreateShiftRequest req)
@@ -279,7 +322,6 @@ public class JobPostsController : ControllerBase
         });
     }
 
-    // PUT /api/jobposts/shifts/{shiftId}
     [HttpPut("shifts/{shiftId}")]
     [Authorize(Roles = "EMPLOYER")]
     public async Task<IActionResult> UpdateShift(Guid shiftId, [FromBody] UpdateShiftRequest req)
@@ -305,7 +347,6 @@ public class JobPostsController : ControllerBase
         return Ok(new { message = "Shift updated successfully" });
     }
 
-    // DELETE /api/jobposts/shifts/{shiftId}
     [HttpDelete("shifts/{shiftId}")]
     [Authorize(Roles = "EMPLOYER")]
     public async Task<IActionResult> DeleteShift(Guid shiftId)
@@ -326,7 +367,6 @@ public class JobPostsController : ControllerBase
         return Ok(new { message = "Shift deleted successfully" });
     }
 
-    // GET /api/jobposts/{id}/shifts
     [HttpGet("{id}/shifts")]
     [AllowAnonymous]
     public async Task<IActionResult> GetShifts(Guid id)
@@ -338,8 +378,7 @@ public class JobPostsController : ControllerBase
         return Ok(shifts);
     }
 }
-
-// DTOs
+                                
 public class CreateJobPostRequest
 {
     [Required]
