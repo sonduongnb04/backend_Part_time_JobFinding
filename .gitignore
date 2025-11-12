@@ -1,6 +1,7 @@
 # ASP.NET / .NET build files
 bin/
 obj/
+uploads/
 *.user
 *.suo
 *.vspscc
