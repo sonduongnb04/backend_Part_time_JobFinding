@@ -31,7 +31,7 @@ public class JobPostsController : ControllerBase
         [FromQuery] Guid? categoryId = null,
         [FromQuery] decimal? minSalary = null,
         [FromQuery] decimal? maxSalary = null,
-        [FromQuery] string? shiftName = null,
+        [FromQuery] Guid? JobShiftId = null,
         [FromQuery] byte? dayOfWeek = null)
     {
         if (page <= 0) page = 1;
@@ -63,10 +63,9 @@ public class JobPostsController : ControllerBase
             query = query.Where(j => j.SalaryMin == null || j.SalaryMin <= max);
         }
 
-        if (!string.IsNullOrWhiteSpace(shiftName))
+        if (JobShiftId != null)
         {
-            var pattern = $"%{shiftName.Trim()}%";
-            query = query.Where(j => j.JobShifts.Any(s => s.ShiftName != null && EF.Functions.Like(s.ShiftName, pattern)));
+            query = query.Where(j => j.JobShifts.Any(s => s.JobShiftId == JobShiftId));
         }
 
         if (dayOfWeek != null)
@@ -92,7 +91,7 @@ public class JobPostsController : ControllerBase
         });
     }
 
-   
+
     [HttpGet("{id}")]
     [AllowAnonymous]
     public async Task<IActionResult> GetJobPost(Guid id)
@@ -117,16 +116,55 @@ public class JobPostsController : ControllerBase
     [Authorize(Roles = "EMPLOYER")]
     public async Task<IActionResult> GetMyJobPosts()
     {
-        var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        try
+        {
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
-        var jobPosts = await _db.JobPosts
-            .Include(j => j.Company)
-            .Include(j => j.JobShifts)
-            .Where(j => j.CreatedBy == userId && !j.IsDeleted)
-            .OrderByDescending(j => j.CreatedAt)
-            .ToListAsync();
+            // Lấy danh sách CompanyId mà user sở hữu
+            var companies = await _db.Companies
+                .Where(c => c.OwnerUserId == userId && !c.IsDeleted)
+                .ToListAsync();
 
-        return Ok(jobPosts);
+            Console.WriteLine($"UserId: {userId}");
+            Console.WriteLine($"Found {companies.Count} companies");
+
+            if (!companies.Any())
+            {
+                return Ok(new
+                {
+                    message = "No companies found for this user",
+                    userId = userId,
+                    jobPosts = new List<JobPost>()
+                });
+            }
+
+            var companyIds = companies.Select(c => c.CompanyId).ToList();
+            Console.WriteLine($"CompanyIds: {string.Join(", ", companyIds)}");
+
+            // Lấy các job posts thuộc các companies của user
+            var jobPosts = await _db.JobPosts
+                .Include(j => j.Company)
+                .Include(j => j.JobShifts)
+                .Where(j => companyIds.Contains(j.CompanyId) && !j.IsDeleted)
+                .OrderByDescending(j => j.CreatedAt)
+                .ToListAsync();
+
+            Console.WriteLine($"Found {jobPosts.Count} job posts");
+
+            return Ok(new
+            {
+                userId = userId,
+                companiesCount = companies.Count,
+                jobPostsCount = jobPosts.Count,
+                jobPosts = jobPosts
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error in GetMyJobPosts: {ex.Message}");
+            Console.WriteLine($"StackTrace: {ex.StackTrace}");
+            return StatusCode(500, new { message = "Internal server error", error = ex.Message });
+        }
     }
 
     [HttpGet("company/{companyId}")]
@@ -378,7 +416,7 @@ public class JobPostsController : ControllerBase
         return Ok(shifts);
     }
 }
-                                
+
 public class CreateJobPostRequest
 {
     [Required]

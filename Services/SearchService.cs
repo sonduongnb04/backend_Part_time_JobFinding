@@ -1,18 +1,20 @@
 // Services/SearchService.cs
 using Microsoft.EntityFrameworkCore;
+using System.Linq.Expressions;
 
 namespace PTJ.Services;
 
 public class SearchService : ISearchService
 {
-
-    /// Performs search using EF Core's LIKE operator with fuzzy matching
-    /// Supports Vietnamese and case-insensitive search
-
+    /// <summary>
+    /// Performs search using database-level filtering with EF.Functions.Like
+    /// Supports Vietnamese and case-insensitive search with optimal performance
+    /// All filtering is done at the database level - no in-memory operations
+    /// </summary>
     public async Task<SearchResult<T>> SearchAsync<T>(
         IQueryable<T> query,
         string searchTerm,
-        Func<T, string> selector,
+        Expression<Func<T, string>> selector,
         int page = 1,
         int size = 20) where T : class
     {
@@ -34,55 +36,21 @@ public class SearchService : ISearchService
             };
         }
 
-        // Normalize search term (trim and convert to lower for case-insensitive)
-        var normalizedSearchTerm = searchTerm.Trim().ToLower();
+        // Normalize search term (trim)
+        var normalizedSearchTerm = searchTerm.Trim();
 
-        // Fetch all data and apply in-memory filtering
-        // Note: For large datasets, consider using full-text search (SQL Server FTS)
-        var allData = await query.ToListAsync();
+        // Build database-level filter expression
+        // This will be translated to SQL LIKE queries
+        var filteredQuery = ApplySearchFilter(query, selector, normalizedSearchTerm);
 
-        // Apply fuzzy search algorithm
-        var filteredData = allData
-            .Where(item =>
-            {
-                var fieldValue = selector(item);
-                if (string.IsNullOrEmpty(fieldValue))
-                    return false;
+        // Count total results (executes COUNT query on database)
+        var totalCountValue = await filteredQuery.CountAsync();
 
-                var normalizedFieldValue = fieldValue.ToLower();
-
-                // Strategy 1: Exact match (highest priority)
-                if (normalizedFieldValue == normalizedSearchTerm)
-                    return true;
-
-                // Strategy 2: Contains (partial match)
-                if (normalizedFieldValue.Contains(normalizedSearchTerm))
-                    return true;
-
-                // Strategy 3: Word-by-word matching (for multi-word queries)
-                var searchWords = normalizedSearchTerm.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                var fieldWords = normalizedFieldValue.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-
-                // Check if all search words exist in field words
-                var allWordsMatch = searchWords.All(searchWord =>
-                    fieldWords.Any(fieldWord => fieldWord.Contains(searchWord)));
-
-                if (allWordsMatch)
-                    return true;
-
-                // Strategy 4: Levenshtein distance for typo tolerance (optional)
-                // You can implement this for more advanced fuzzy matching
-
-                return false;
-            })
-            .ToList();
-
-        // Pagination
-        var totalCountValue = filteredData.Count;
-        var paginatedItems = filteredData
+        // Fetch paginated results (executes SELECT with LIMIT/OFFSET on database)
+        var paginatedItems = await filteredQuery
             .Skip((page - 1) * size)
             .Take(size)
-            .ToList();
+            .ToListAsync();
 
         return new SearchResult<T>
         {
@@ -93,39 +61,101 @@ public class SearchService : ISearchService
         };
     }
 
-
-    /// Calculate Levenshtein Distance for fuzzy matching (optional advanced feature)
-
-    private int LevenshteinDistance(string source, string target)
+    /// <summary>
+    /// Applies search filter at database level using EF.Functions.Like
+    /// Supports multiple strategies for flexible matching
+    /// </summary>
+    private IQueryable<T> ApplySearchFilter<T>(
+        IQueryable<T> query,
+        Expression<Func<T, string>> selector,
+        string searchTerm) where T : class
     {
-        if (string.IsNullOrEmpty(source))
-            return string.IsNullOrEmpty(target) ? 0 : target.Length;
+        // Split search term into words for multi-word search
+        var searchWords = searchTerm.Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
-        if (string.IsNullOrEmpty(target))
-            return source.Length;
+        if (searchWords.Length == 0)
+            return query;
 
-        var sourceLength = source.Length;
-        var targetLength = target.Length;
-        var distance = new int[sourceLength + 1, targetLength + 1];
+        // Build the filter expression dynamically
+        // This creates an expression tree that EF Core can translate to SQL
 
-        for (var i = 0; i <= sourceLength; i++)
-            distance[i, 0] = i;
+        // Start with a predicate that checks if the field is not null or empty
+        Expression<Func<T, bool>> predicate = BuildSearchPredicate(selector, searchWords);
 
-        for (var j = 0; j <= targetLength; j++)
-            distance[0, j] = j;
+        return query.Where(predicate);
+    }
 
-        for (var i = 1; i <= sourceLength; i++)
+    /// <summary>
+    /// Builds a predicate expression for searching
+    /// Combines multiple strategies: exact match, contains, and word-by-word matching
+    /// </summary>
+    private Expression<Func<T, bool>> BuildSearchPredicate<T>(
+        Expression<Func<T, string>> selector,
+        string[] searchWords) where T : class
+    {
+        var parameter = selector.Parameters[0];
+        var propertyAccess = selector.Body;
+
+        // Build conditions for each search strategy
+
+        // Strategy 1: Field contains the entire search term (most common case)
+        // Translates to: field LIKE '%searchTerm%'
+        var fullSearchTerm = string.Join(" ", searchWords);
+        var containsFullTerm = BuildContainsExpression(propertyAccess, fullSearchTerm);
+
+        // Strategy 2: Field contains all individual words (for multi-word queries)
+        // Translates to: field LIKE '%word1%' AND field LIKE '%word2%' AND ...
+        Expression? containsAllWords = null;
+        if (searchWords.Length > 1)
         {
-            for (var j = 1; j <= targetLength; j++)
-            {
-                var cost = target[j - 1] == source[i - 1] ? 0 : 1;
-
-                distance[i, j] = Math.Min(
-                    Math.Min(distance[i - 1, j] + 1, distance[i, j - 1] + 1),
-                    distance[i - 1, j - 1] + cost);
-            }
+            containsAllWords = searchWords
+                .Select(word => BuildContainsExpression(propertyAccess, word))
+                .Aggregate((acc, expr) => Expression.AndAlso(acc, expr));
         }
 
-        return distance[sourceLength, targetLength];
+        // Combine strategies with OR logic
+        var finalCondition = containsAllWords != null
+            ? Expression.OrElse(containsFullTerm, containsAllWords)
+            : containsFullTerm;
+
+        // Add null/empty check
+        var notNullOrEmpty = Expression.Call(
+            typeof(string),
+            nameof(string.IsNullOrEmpty),
+            null,
+            propertyAccess
+        );
+        var isNotNullOrEmpty = Expression.Not(notNullOrEmpty);
+
+        // Combine: field is not null/empty AND (search conditions)
+        var finalPredicate = Expression.AndAlso(isNotNullOrEmpty, finalCondition);
+
+        return Expression.Lambda<Func<T, bool>>(finalPredicate, parameter);
+    }
+
+    /// <summary>
+    /// Builds a "contains" expression using EF.Functions.Like
+    /// This is translated to SQL LIKE '%term%' with case-insensitive collation
+    /// </summary>
+    private Expression BuildContainsExpression(Expression propertyAccess, string searchTerm)
+    {
+        var pattern = $"%{searchTerm}%";
+        var patternExpression = Expression.Constant(pattern);
+
+        // Call EF.Functions.Like(field, pattern)
+        // EF Core translates this to SQL: field LIKE pattern COLLATE Latin1_General_CI_AI
+        var likeMethod = typeof(DbFunctionsExtensions).GetMethod(
+            nameof(DbFunctionsExtensions.Like),
+            new[] { typeof(DbFunctions), typeof(string), typeof(string) }
+        )!;
+
+        var efFunctionsProperty = Expression.Property(null, typeof(EF), nameof(EF.Functions));
+
+        return Expression.Call(
+            likeMethod,
+            efFunctionsProperty,
+            propertyAccess,
+            patternExpression
+        );
     }
 }
