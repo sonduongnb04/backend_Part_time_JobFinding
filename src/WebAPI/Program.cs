@@ -1,15 +1,3 @@
-/*
- * Clean Architecture Implementation
- *
- * Architecture Layers:
- * - Domain: Core entities, interfaces, constants (no dependencies)
- * - Application: Business logic, DTOs, validators, service interfaces
- * - Infrastructure: Data access, repositories, external services
- * - WebAPI: Controllers, middleware, extensions (presentation layer)
- *
- * See src/ folder for the new structure
- */
-
 using Microsoft.Extensions.FileProviders;
 using PTJ.WebAPI.Extensions;
 
@@ -28,7 +16,7 @@ builder.Services.AddValidators();
 // Swagger
 builder.Services.AddSwaggerGen(c =>
 {
-    c.SwaggerDoc("v1", new() { Title = "PTJ API - Clean Architecture", Version = "v1" });
+    c.SwaggerDoc("v1", new() { Title = "PTJ API", Version = "v1" });
 
     // Add JWT Authentication to Swagger
     c.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
