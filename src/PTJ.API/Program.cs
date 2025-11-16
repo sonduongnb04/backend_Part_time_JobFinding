@@ -108,7 +108,13 @@ builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 
 // Register services
 builder.Services.AddScoped<IJwtService, JwtService>();
-// TODO: Register other services (IAuthService, IJobPostService, etc.) when implemented
+builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IJobPostService, JobPostService>();
+builder.Services.AddScoped<ICompanyService, CompanyService>();
+builder.Services.AddScoped<IProfileService, ProfileService>();
+builder.Services.AddScoped<IApplicationService, ApplicationService>();
+builder.Services.AddScoped<IFileStorageService, LocalFileStorageService>();
+builder.Services.AddScoped<ISearchService, SearchService>();
 
 var app = builder.Build();
 
@@ -122,6 +128,9 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 
 app.UseCors("AllowAll");
+
+// Serve static files from uploads folder
+app.UseStaticFiles();
 
 app.UseAuthentication();
 app.UseAuthorization();
