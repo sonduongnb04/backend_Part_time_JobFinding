@@ -35,6 +35,11 @@ public class AppDbContext : DbContext
     public DbSet<JobShift> JobShifts => Set<JobShift>();
     public DbSet<JobPostSkill> JobPostSkills => Set<JobPostSkill>();
 
+    // Applications
+    public DbSet<Application> Applications => Set<Application>();
+    public DbSet<ApplicationHistory> ApplicationHistory => Set<ApplicationHistory>();
+    public DbSet<ApplicationStatus> ApplicationStatuses => Set<ApplicationStatus>();
+
     public DbSet<CompanyRegistrationRequest> CompanyRegistrationRequests => Set<CompanyRegistrationRequest>();
 
     protected override void OnModelCreating(ModelBuilder b)
@@ -186,6 +191,40 @@ public class AppDbContext : DbContext
             e.ToTable("JobPostSkills", "jobs");
             e.HasKey(x => new { x.JobPostId, x.SkillId });
             e.HasOne(x => x.JobPost).WithMany(p => p.JobPostSkills).HasForeignKey(x => x.JobPostId);
+        });
+
+        // jobs.Applications
+        b.Entity<Application>(e =>
+        {
+            e.ToTable("Applications", "jobs");
+            e.HasKey(x => x.ApplicationId);
+            e.Property(x => x.ApplicationId).HasDefaultValueSql("NEWSEQUENTIALID()");
+            e.HasIndex(x => new { x.JobPostId, x.StudentUserId }).IsUnique();
+            e.HasOne(x => x.JobPost).WithMany().HasForeignKey(x => x.JobPostId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Student).WithMany().HasForeignKey(x => x.StudentUserId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Profile).WithMany().HasForeignKey(x => x.ProfileId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.CVFile).WithMany().HasForeignKey(x => x.CVFileId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Status).WithMany().HasForeignKey(x => x.StatusId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // jobs.ApplicationHistory
+        b.Entity<ApplicationHistory>(e =>
+        {
+            e.ToTable("ApplicationHistory", "jobs");
+            e.HasKey(x => x.HistoryId);
+            e.Property(x => x.HistoryId).HasDefaultValueSql("NEWSEQUENTIALID()");
+            e.HasOne(x => x.Application).WithMany(a => a.ApplicationHistories).HasForeignKey(x => x.ApplicationId);
+            e.HasOne(x => x.OldStatus).WithMany().HasForeignKey(x => x.OldStatusId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.NewStatus).WithMany().HasForeignKey(x => x.NewStatusId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.ChangedByUser).WithMany().HasForeignKey(x => x.ChangedBy).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // jobs.ApplicationStatus
+        b.Entity<ApplicationStatus>(e =>
+        {
+            e.ToTable("ApplicationStatus", "jobs");
+            e.HasKey(x => x.StatusId);
+            e.HasIndex(x => x.Code).IsUnique();
         });
 
         b.Entity<CompanyRegistrationRequest>(e =>

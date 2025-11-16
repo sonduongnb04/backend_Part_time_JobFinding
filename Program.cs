@@ -23,6 +23,7 @@ builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 
 // Services
 builder.Services.AddScoped<IJobPostService, JobPostService>();
+builder.Services.AddScoped<ISearchService, SearchService>();
 
 // File Storage Service
 var storageProvider = builder.Configuration["FileStorage:Provider"] ?? "Local";
