@@ -1,0 +1,6 @@
+@PTJ.Api_HostAddress = http://localhost:5223
+
+GET {{PTJ.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
