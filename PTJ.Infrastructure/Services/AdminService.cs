@@ -122,6 +122,43 @@ public class AdminService : IAdminService
         return Result.SuccessResult("Job post deleted successfully");
     }
 
+    public async Task<Result<PaginatedList<object>>> GetJobsAsync(string? search, int pageNumber, int pageSize)
+    {
+        var query = _unitOfWork.JobPosts.GetQueryable()
+            .Include(j => j.Company)
+            .AsQueryable();
+
+        if (!string.IsNullOrEmpty(search))
+        {
+            search = search.ToLower();
+            query = query.Where(j => 
+                j.Title.ToLower().Contains(search) || 
+                j.Company.Name.ToLower().Contains(search) ||
+                (j.Location != null && j.Location.Contains(search))
+            );
+        }
+
+        var totalCount = await query.CountAsync();
+        
+        var items = await query
+            .OrderByDescending(j => j.CreatedAt)
+            .Skip((pageNumber - 1) * pageSize)
+            .Take(pageSize)
+            .Select(j => new
+            {
+                j.Id,
+                j.Title,
+                CompanyName = j.Company.Name,
+                j.Location,
+                j.Status,
+                j.CreatedAt
+            })
+            .ToListAsync();
+
+        var paginated = new PaginatedList<object>(items.Cast<object>().ToList(), totalCount, pageNumber, pageSize);
+        return Result<PaginatedList<object>>.SuccessResult(paginated);
+    }
+
     public async Task<Result<object>> GetDashboardStatsAsync()
     {
         var totalUsers = await _unitOfWork.Users.CountAsync();
